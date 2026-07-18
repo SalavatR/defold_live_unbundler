@@ -1,4 +1,4 @@
-BOB_VERSION := e43be333aa7a4fc319ab62adc8d405c8e98bf92f
+BOB_VERSION := f735c12192bf95684e6ae1ae27c400b8170fc6d8
 BOB_STAGE := stable
 VERSION_NUMBER_STR := $(shell grep '^version =' game.project | awk -F '=' '{print $$2}' | awk '{$$1=$$1};1')
 VERSION_NUMBER := $(shell echo $(VERSION_NUMBER_STR))
@@ -21,7 +21,7 @@ buildliveupdatehighres: $(BOB_FILE)
 		--build-report-html build/report.html \
 		--variant debug \
 		--archive \
-		--platform js-web \
+		--platform wasm-web \
 		--use-async-build-server \
 		--liveupdate yes \
 		resolve build bundle
@@ -46,7 +46,7 @@ buildliveupdatelowres: $(BOB_FILE)
 		--build-report-html build/report.html \
 		--variant debug \
 		--archive \
-		--platform js-web \
+		--platform wasm-web \
 		--use-async-build-server \
 		--liveupdate yes \
 		resolve build bundle
@@ -79,7 +79,7 @@ buildweb: $(BOB_FILE)
 		--build-report-html build/report.html \
 		--variant debug \
 		--archive \
-		--platform js-web \
+		--platform wasm-web \
 		--use-async-build-server \
 		--liveupdate yes \
 		resolve build bundle

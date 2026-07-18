@@ -60,7 +60,7 @@ local function get_modules()
 end
 
 local function get_save_file(filename)
-	local bundle_identifier = sys.get_config("project.bundle_identifier")
+	local bundle_identifier = sys.get_config_string("project.bundle_identifier")
 	return sys.get_save_file(bundle_identifier, filename)
 end
 

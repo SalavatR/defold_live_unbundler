@@ -83,7 +83,7 @@ Logic:
 1. `get_deps_files` walks every `ExcludedCollectionProxy` and gathers their transitive dependencies.
 2. `build_common_files` tags resources with `use_count` (how many collections reference each one).
 3. `create_common_archives_by_dependency_sets` groups shared resources by the **exact set of consumer collections** — so a common chunk is re-downloaded only by the collections that actually use it.
-4. `split_by_size` slices each class into pieces ≤ `MAX_ARCHIVE_SIZE` (7 MiB). It keeps `*.texturec` + `*.a.texturesetc` pairs together (by shared stem) and keeps each `*.soundc` together with its compiled audio (`*.oggc`/`*.opusc`/`*.wavc`) in the same chunk. Sound co-location follows the graph `children` edge, not a shared name, and is 1:N — a component with several format variants stays whole.
+4. `split_by_size` slices each class into chunks that target ≤ `MAX_ARCHIVE_SIZE` (7 MiB). It keeps `*.texturec` + `*.a.texturesetc` pairs together (by shared stem) and keeps each `*.soundc` together with its compiled audio (`*.oggc`/`*.opusc`/`*.wavc`) in the same chunk. Sound co-location follows the graph `children` edge, not a shared name, and is 1:N — a component with several format variants stays whole. A single indivisible unit (a texture pair or a sound + its audio) whose size alone exceeds the cap is emitted whole in its own archive rather than split, so an archive can legitimately exceed 7 MiB.
 
 ### 2.3 Archive version
 

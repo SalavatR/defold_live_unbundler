@@ -11,6 +11,13 @@ import liveupdate_ddf_pb2
 MAX_ARCHIVE_SIZE = 7340032
 HASH_LEN = 16
 
+# Fixed timestamp for every zip entry. Build tools (e.g. bob) may stamp extracted
+# resources with epoch 0 (1970), which the ZIP format cannot represent — it only
+# supports dates >= 1980 — and zipfile would raise "ZIP does not support
+# timestamps before 1980" when writing them. A constant also makes the archives
+# byte-reproducible (independent of source mtimes).
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
 # Postfix appended to a collection's id to form its archive/manifest name. The
 # build graph delivers collections as "<id>.collectionc"; the last extension is
 # stripped and this suffix is put in its place. Default is empty (no postfix);
@@ -143,9 +150,14 @@ class PackContext:
                     file_contents = file_obj.read()
                     content_hashers["all"].update(file_contents)
                     content_hashers["no_manifest"].update(file_contents)
-                    zip_file.write(
-                        file_path_hex, arcname=self.files[filepath]["hexDigest"]
+                    # write the already-read bytes with a fixed timestamp instead of
+                    # zip_file.write(path), which would read the source file's mtime
+                    # (epoch 0 from bob -> pre-1980 ZIP error)
+                    zinfo = zipfile.ZipInfo(
+                        self.files[filepath]["hexDigest"], date_time=ZIP_EPOCH
                     )
+                    zinfo.compress_type = zipfile.ZIP_DEFLATED
+                    zip_file.writestr(zinfo, file_contents)
 
                     self.added_files[self.files[filepath]["hexDigest"]] = zip_name
 
@@ -192,7 +204,9 @@ class PackContext:
             dmanifest_bytes = self.dmanifest.SerializeToString()
             content_hashers["dmanifest"].update(dmanifest_bytes)
             content_hashers["all"].update(dmanifest_bytes)
-            zip_file.writestr(self.dmanifest_name, dmanifest_bytes)
+            dmanifest_info = zipfile.ZipInfo(self.dmanifest_name, date_time=ZIP_EPOCH)
+            dmanifest_info.compress_type = zipfile.ZIP_DEFLATED
+            zip_file.writestr(dmanifest_info, dmanifest_bytes)
         content_hash_no_manifest = content_hashers["no_manifest"].hexdigest()
         version_hasher = hashlib.sha256()
         for resource_entry in sorted(
