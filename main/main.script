@@ -5,6 +5,7 @@ go.property("collectionproxy1", msg.url())
 go.property("collectionproxy2", msg.url())
 go.property("collectionproxy3", msg.url())
 go.property("collectionproxy4", msg.url())
+go.property("collectionproxy_music", msg.url())
 
 local function get_modules()
 	local load_table = {}
@@ -47,6 +48,14 @@ local function get_modules()
 		"collection4",
 	}, live_unbundler.RES_HIGH_ONLY, true)
 
+	-- music.collection is an excluded proxy holding three sound components
+	-- (.wav / .ogg / .opus). The packer puts its .soundc + audio children into a
+	-- "music_sound" archive (see is_sound_resource in liveupdate_pack.py); the
+	-- base "music" archive lists it as a dependency.
+	add_load_item("music", {
+		"music",
+	}, live_unbundler.RES_HIGH_ONLY)
+
 	return load_table
 end
 
@@ -66,14 +75,24 @@ local function init_live_unbundler(self)
 	local lowres_path = string.format("%s%s", server_path, "/liveupdatelowres/")
 	local hires_path = string.format("%s%s", server_path, "/liveupdatehighres/")
 
+	-- Route module logs to the console. live_unbundler[level] maps the numeric
+	-- level (DEBUG..FATAL) to its name. Set before init to capture init-time logs.
+	live_unbundler.set_log_function(function(level, message)
+		pprint(string.format("[live_unbundler %s] %s", live_unbundler[level], message))
+	end)
+	-- Must be called before init. Keep the key stable across releases so existing
+	-- installs keep their saved list of downloaded archives.
+	live_unbundler.set_save_cache_key(get_save_file("liveupdate_saved_files"))
+	-- Optional: disable liveupdate on a platform (e.g. Android PAD) by calling
+	-- live_unbundler.set_platform_supported(false) before init. Defaults to true.
+	live_unbundler.set_platform_supported(true)
+
 	local value, error_msg = flow.until_callback(function(cb)
 		live_unbundler.init(
 			{
 				modules = modules,
 				lowres_server_path = lowres_path,
 				hires_server_path = hires_path, --optional
-				disabled = false, -- optional, for example, for android PAD
-				save_cache_key = get_save_file("liveupdate_saved_files"),
 			},
 			cb,
 			function(module_name)
@@ -108,6 +127,11 @@ function init(self)
 			end
 		end
 		msg.post(self.collectionproxy4, "load")
+
+		while not live_unbundler.is_module_loaded("music") do
+			flow.delay(0.1)
+		end
+		msg.post(self.collectionproxy_music, "load")
 	end)
 end
 

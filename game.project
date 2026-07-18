@@ -23,6 +23,7 @@ scale = 0.01
 scale_mode = stretch
 
 [project]
+version = 1.00
 title = defold_live_unbundler
 bundle_identifier = com.defold_live_unbundler
 minimum_log_level = 0

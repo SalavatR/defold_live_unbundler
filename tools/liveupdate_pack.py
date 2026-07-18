@@ -11,6 +11,13 @@ import liveupdate_ddf_pb2
 MAX_ARCHIVE_SIZE = 7340032
 HASH_LEN = 16
 
+# Postfix appended to a collection's id to form its archive/manifest name. The
+# build graph delivers collections as "<id>.collectionc"; the last extension is
+# stripped and this suffix is put in its place. Default is empty (no postfix);
+# a project enables it via the LIVEUPDATE_COLLECTION_SUFFIX env var (this repo's
+# Makefile sets ".collectionc", which reproduces os.path.basename byte-for-byte).
+COLLECTION_SUFFIX = os.environ.get("LIVEUPDATE_COLLECTION_SUFFIX", "")
+
 
 class PackContext:
     def __init__(self):
@@ -142,11 +149,11 @@ class PackContext:
 
                     self.added_files[self.files[filepath]["hexDigest"]] = zip_name
 
-                    resource_entry = manifest_data_resources[
+                    for resource_entry in manifest_data_resources[
                         self.files[filepath]["hexDigest"]
-                    ]
-                    dmanifest_data.resources.append(resource_entry)
-                    resources_list.append(resource_entry)
+                    ]:
+                        dmanifest_data.resources.append(resource_entry)
+                        resources_list.append(resource_entry)
 
             if common_files_list_name:
                 for main_file in self.common_files.get(filepath, {}).get("files", []):
@@ -198,6 +205,7 @@ class PackContext:
         self.created_archives[common_zip_name] = {
             "path": zip_path,
             "version_hash": version_hash,
+            "size": os.path.getsize(zip_path),
         }
 
     def get_deps_files(self, path, child_path=None):
@@ -237,25 +245,36 @@ class PackContext:
         self.dmanifest_data = liveupdate_ddf_pb2.ManifestData()
         self.dmanifest_data.ParseFromString(self.dmanifest.data)
 
-        self.manifest_data_resources = {
-            resource.hash.data.hex(): resource
-            for resource in self.dmanifest_data.resources
-        }
+        # One content hash may map to several ResourceEntry records (the same
+        # bytes referenced by different urls/url_hash). Keep them all so every
+        # url variant survives into the generated archive manifest.
+        self.manifest_data_resources = {}
+        for resource in self.dmanifest_data.resources:
+            self.manifest_data_resources.setdefault(
+                resource.hash.data.hex(), []
+            ).append(resource)
 
         data = self.load_json_file(self.graph_path)
         if data is None:
             raise Exception("Error loading game.graph.json.")
 
+        # Several paths may legitimately resolve to the same content (same
+        # hexDigest) - e.g. an identical font shipped under two folders. We do
+        # not abort on that: the bytes are stored once (deduped by hexDigest in
+        # add_files_to_zip) while each path keeps its own manifest entry.
         duplicates_map = {}
         for element in data:
-            if element["hexDigest"] in duplicates_map:
-                raise Exception(
-                    f"Duplicate hexDigest found: {element}, duplicates_map: {duplicates_map[element['hexDigest']]}"
-                )
-            else:
-                duplicates_map[element["hexDigest"]] = element
-            if "hexDigest" in element and element["hexDigest"] is not None:
-                element["size"] = self.get_file_size(element["hexDigest"])
+            hex_digest = element.get("hexDigest")
+            if hex_digest is not None:
+                if hex_digest in duplicates_map:
+                    print(
+                        f"Note: shared hexDigest {hex_digest} for "
+                        f"{duplicates_map[hex_digest]} and {element['path']} "
+                        "(stored once, both manifest entries kept)"
+                    )
+                else:
+                    duplicates_map[hex_digest] = element["path"]
+                element["size"] = self.get_file_size(hex_digest)
             self.files[element["path"]] = element
             if (
                 "nodeType" in element
@@ -307,12 +326,8 @@ class PackContext:
         self.rename_archives_to_version()
 
         manifest_output["version"] = self.current_timestamp
-        for common_name, archive_info in self.created_archives.items():
-            entry = manifest_output["files"].get(common_name)
-            if entry is None:
-                manifest_output["files"][common_name] = [archive_info["version_hash"]]
-            else:
-                entry[0] = archive_info["version_hash"]
+        manifest_output["file_versions"] = self.build_file_versions()
+        manifest_output["file_sizes"] = self.build_file_sizes()
         manifest_output["dmanifest_info"] = self.build_dmanifest_info()
         with open(os.path.join(self.result_folder, "manifest.json"), "w") as outfile:
             json.dump(manifest_output, outfile, indent=4)
@@ -334,6 +349,25 @@ class PackContext:
             for k in keys:
                 unit_size += self.files[k]["size"]
             return {"keys": keys, "size": unit_size}
+
+        # Sound grouping: keep a .soundc together with its compiled audio children
+        # (.oggc / .opusc / .wavc) so a component and the samples it plays land in
+        # one archive. The relationship is the graph "children" edge (they do not
+        # share a stem like textures) and is 1:N. Restrict to keys in this list so
+        # a child that was routed elsewhere (e.g. a shared audio in common_*) is
+        # simply not pulled here.
+        soundc_children = {}
+        child_to_soundc = {}
+        for key in file_keys:
+            if key.endswith(".soundc"):
+                kids = [
+                    c
+                    for c in (self.files.get(key, {}).get("children") or [])
+                    if self.is_sound_child(c) and c in key_set
+                ]
+                soundc_children[key] = kids
+                for c in kids:
+                    child_to_soundc.setdefault(c, key)
 
         units = []
         for key in file_keys:
@@ -360,6 +394,19 @@ class PackContext:
                     )
                     units.append(make_unit(pair_order))
                     continue
+            elif key.endswith(".soundc") or self.is_sound_child(key):
+                # anchor on the .soundc (the parent); an audio child hit first
+                # resolves to its soundc so the whole group is emitted once
+                anchor = key if key.endswith(".soundc") else child_to_soundc.get(key)
+                if anchor is not None:
+                    group = [key]
+                    for member in [anchor] + soundc_children.get(anchor, []):
+                        if member not in used:
+                            used.add(member)
+                            group.append(member)
+                    group_order = sorted(set(group), key=lambda k: key_index[k])
+                    units.append(make_unit(group_order))
+                    continue
             units.append(make_unit([key]))
 
         for unit in units:
@@ -382,8 +429,25 @@ class PackContext:
             ".a.texturesetc"
         )
 
+    def is_sound_resource(self, resource_path):
+        # A sound component (.soundc) plus its compiled audio children
+        # (.oggc / .opusc / .wavc). Unlike a texture pair, a .soundc and its
+        # audio do NOT share a stem — the link is a graph "children" edge and is
+        # 1:N — so co-location is done via self.files[...]["children"] in
+        # split_by_size, not by name.
+        return resource_path.endswith((".soundc", ".oggc", ".opusc", ".wavc"))
+
+    def is_sound_child(self, resource_path):
+        return resource_path.endswith((".oggc", ".opusc", ".wavc"))
+
     def truncate_hash(self, hex_digest):
         return hex_digest[:HASH_LEN]
+
+    def collection_name(self, resource_path):
+        # "<id>.collectionc" -> "<id>" + COLLECTION_SUFFIX. With the default
+        # suffix this reproduces os.path.basename() byte-for-byte.
+        stem = os.path.splitext(os.path.basename(resource_path))[0]
+        return stem + COLLECTION_SUFFIX
 
     def compute_version_hash_from_files(self, files_list):
         version_hasher = hashlib.sha256()
@@ -395,8 +459,7 @@ class PackContext:
             hex_digest = file_info.get("hexDigest")
             if not hex_digest:
                 raise Exception(f"Missing hexDigest for file: {filepath}")
-            resource_entry = self.manifest_data_resources[hex_digest]
-            resources.append(resource_entry)
+            resources.extend(self.manifest_data_resources[hex_digest])
         for resource_entry in sorted(resources, key=lambda item: item.hash.data.hex()):
             version_hasher.update(resource_entry.SerializeToString())
         return self.truncate_hash(version_hasher.hexdigest())
@@ -408,14 +471,17 @@ class PackContext:
                 continue
             key = tuple(sorted(info["files"]))
             if key not in groups:
-                groups[key] = {"textures": [], "others": []}
+                groups[key] = {"textures": [], "sounds": [], "others": []}
             if self.is_texture_resource(res_name):
                 groups[key]["textures"].append(res_name)
+            elif self.is_sound_resource(res_name):
+                groups[key]["sounds"].append(res_name)
             else:
                 groups[key]["others"].append(res_name)
 
         for key in sorted(groups.keys()):
             texture_files = sorted(groups[key]["textures"])
+            sound_files = sorted(groups[key]["sounds"])
             other_files = sorted(groups[key]["others"])
 
             if other_files:
@@ -430,63 +496,92 @@ class PackContext:
                     archive_name = f"common_texture_{version_hash}"
                     self.create_zip_archive(archive_name, chunk, archive_name)
 
+            if sound_files:
+                for chunk in self.split_by_size(sound_files):
+                    version_hash = self.compute_version_hash_from_files(chunk)
+                    archive_name = f"common_sound_{version_hash}"
+                    self.create_zip_archive(archive_name, chunk, archive_name)
+
+    def is_shared_resource(self, resource_path):
+        # Resources used by more than one collection are packed into common_*
+        # archives (see create_common_archives_by_dependency_sets). Packing them
+        # per-collection as well only produces empty stub archives, because
+        # add_files_to_zip writes each resource's bytes exactly once and the
+        # collection already depends on the common archive that holds them.
+        return self.common_files.get(resource_path, {}).get("use_count", 0) > 1
+
     def create_collection_archives(self):
         print("Starting zip file collection")
         for path in self.zip_files:
-            zip_file_name = os.path.splitext(
-                os.path.basename(self.files[path]["children"][0])
-            )[0]
-            files_list = list(self.zip_files[path].keys())
+            zip_file_name = self.collection_name(self.files[path]["children"][0])
+            files_list = [f for f in self.zip_files[path].keys() if not self.is_shared_resource(f)]
             texture_files = [f for f in files_list if self.is_texture_resource(f)]
-            other_files = [f for f in files_list if not self.is_texture_resource(f)]
+            sound_files = [f for f in files_list if self.is_sound_resource(f)]
+            other_files = [
+                f
+                for f in files_list
+                if not self.is_texture_resource(f) and not self.is_sound_resource(f)
+            ]
 
-            if other_files:
-                self.create_zip_archive(zip_file_name, other_files)
+            # Always emit the base collection archive (<name> + COLLECTION_SUFFIX):
+            # the liveupdater requires every collection module's base name to exist in the
+            # manifest (is_module_loaded / check_modules_integrity). A collection's
+            # own main object is exclusive, so other_files is non-empty in practice,
+            # but keep this unconditional so the invariant can't be broken by a
+            # collection whose only exclusive resources are textures.
+            self.create_zip_archive(zip_file_name, other_files)
 
             if texture_files:
-                texture_archive_name = f"{zip_file_name}_texture"
-                self.create_zip_archive(texture_archive_name, texture_files)
                 main_file = self.files[path]["children"][0]
                 if main_file not in self.dependency_list:
                     self.dependency_list[main_file] = []
-                if texture_archive_name not in self.dependency_list[main_file]:
-                    self.dependency_list[main_file].append(texture_archive_name)
+                base_name = f"{zip_file_name}_texture"
+                texture_chunks = self.split_by_size(texture_files)
+                for chunk in texture_chunks:
+                    if len(texture_chunks) == 1:
+                        texture_archive_name = base_name
+                    else:
+                        version_hash = self.compute_version_hash_from_files(chunk)
+                        texture_archive_name = f"{base_name}_{version_hash}"
+                    self.create_zip_archive(texture_archive_name, chunk)
+                    if texture_archive_name not in self.dependency_list[main_file]:
+                        self.dependency_list[main_file].append(texture_archive_name)
+
+            if sound_files:
+                main_file = self.files[path]["children"][0]
+                if main_file not in self.dependency_list:
+                    self.dependency_list[main_file] = []
+                base_name = f"{zip_file_name}_sound"
+                sound_chunks = self.split_by_size(sound_files)
+                for chunk in sound_chunks:
+                    if len(sound_chunks) == 1:
+                        sound_archive_name = base_name
+                    else:
+                        version_hash = self.compute_version_hash_from_files(chunk)
+                        sound_archive_name = f"{base_name}_{version_hash}"
+                    self.create_zip_archive(sound_archive_name, chunk)
+                    if sound_archive_name not in self.dependency_list[main_file]:
+                        self.dependency_list[main_file].append(sound_archive_name)
         print("Zip file collection completed.")
 
     def build_manifest_output(self):
-        collections_list = []
-        collection_index = {}
-
-        def intern_collection(name):
-            idx = collection_index.get(name)
-            if idx is None:
-                idx = len(collections_list)
-                collection_index[name] = idx
-                collections_list.append(name)
-            return idx
-
-        archive_deps = {}
-        for filepath, archives in self.dependency_list.items():
-            file_name = os.path.splitext(os.path.basename(filepath))[0]
-            for archive in archives:
-                archive_deps.setdefault(archive, []).append(file_name)
-
-        files = {}
-        for archive_name, archive_info in self.created_archives.items():
-            version_hash = archive_info["version_hash"]
-            dep_files = archive_deps.get(archive_name)
-            if dep_files:
-                indices = [intern_collection(f) for f in dep_files]
-                files[archive_name] = [version_hash, indices]
-            else:
-                files[archive_name] = [version_hash]
-
-        return {
+        manifest_output = {
             "version": self.current_timestamp,
-            "collections": collections_list,
-            "files": files,
+            "deps": {},
+            "file_versions": self.build_file_versions(),
+            "file_sizes": self.build_file_sizes(),
             "dmanifest_info": self.build_dmanifest_info(),
         }
+
+        for filepath, archives in self.dependency_list.items():
+            for archive in archives:
+                if archive not in manifest_output["deps"]:
+                    manifest_output["deps"][archive] = []
+
+                file_name = self.collection_name(filepath)
+                manifest_output["deps"][archive].append(file_name)
+
+        return manifest_output
 
     def write_outputs(self, manifest_output):
         with open(os.path.join(self.result_folder, "manifest.json"), "w") as outfile:
@@ -521,6 +616,20 @@ class PackContext:
                 os.replace(archive_info["path"], final_path)
                 archive_info["path"] = final_path
             print(f"Final archive: {final_name}")
+
+    def build_file_versions(self):
+        file_versions = {}
+        for common_name, archive_info in self.created_archives.items():
+            file_versions[common_name] = archive_info["version_hash"]
+        return file_versions
+
+    # sizes live in a separate key so that clients deployed before this field
+    # existed keep parsing file_versions as plain strings
+    def build_file_sizes(self):
+        file_sizes = {}
+        for common_name, archive_info in self.created_archives.items():
+            file_sizes[common_name] = archive_info["size"]
+        return file_sizes
 
     def build_dmanifest_info(self):
         header = self.dmanifest_data.header

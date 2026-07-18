@@ -69,6 +69,7 @@ buildliveupdateres:
 	@mkdir -p "dist/output/$(VERSION_NUMBER)/"
 	@make buildliveupdatehighres
 	@make buildliveupdatelowres
+	@make report
 
 buildweb: $(BOB_FILE)
 	@java -jar $(BOB_FILE) \
@@ -87,13 +88,18 @@ buildweb: $(BOB_FILE)
 
 
 copyliveupdateres:
-	@cp -r "dist/output/$(VERSION_NUMBER)/liveupdatehighres" "dist/output/$(VERSION_NUMBER)/liveupdatelowres" "dist/defold_live_unbundler/"
+	@cp -r "dist/output/$(VERSION_NUMBER)/." "dist/defold_live_unbundler/"
 
 buildlocalweb:
 	@make buildweb
 	@make buildliveupdateres
 	@make copyliveupdateres
 
+
+report:
+	@echo "Build liveupdate collections report"
+	@python3 "tools/liveupdate_collections_report.py" --version-dir "dist/output/$(VERSION_NUMBER)"
+	@echo "Report: dist/output/$(VERSION_NUMBER)/liveupdate_collections_report.html"
 
 serve3:
 	@echo "Serve dist directory on http://localhost:8000"
