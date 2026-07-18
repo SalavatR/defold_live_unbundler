@@ -64,6 +64,35 @@ All build recipes live in the [Makefile](Makefile). Highlights:
 
 ---
 
+## What the packer produces
+
+`tools/liveupdate_pack.py` takes the resources of every **excluded** collection proxy and
+splits them into small archives, grouped by kind so heavy media ships — and updates —
+independently of a collection's structure. For each collection it emits:
+
+| Archive | Contents |
+| --- | --- |
+| `<collection>`         | the collection's structural resources (`.goc`, `.collectionc`, scripts, …) |
+| `<collection>_texture` | its textures — a `.texturec` and its `.a.texturesetc` are always kept together in one archive |
+| `<collection>_sound`   | its sounds — a `.soundc` and its audio (`.oggc`/`.opusc`/`.wavc`) are kept together |
+
+A resource used by **two or more** collections is factored out once into a shared archive —
+`common_<hash>`, `common_texture_<hash>` or `common_sound_<hash>` — grouped by the exact set
+of collections that need it, so it downloads a single time and is reused. Texture and sound
+archives are recorded as **dependencies** of their collection, so loading a collection module
+pulls its media automatically.
+
+Texture, sound and common archives are sliced to ≤ 7 MiB (`MAX_ARCHIVE_SIZE`); a texture pair
+or a sound + its audio that jointly exceeds the cap is kept whole in its own archive rather
+than being split apart. The two kinds are matched differently: a texture and its set share a
+name stem, while a `.soundc` is linked to its audio through the resource graph (1:N, no shared
+name) — see [LIVEUPDATE_ARCHITECTURE.md](LIVEUPDATE_ARCHITECTURE.md) §2 for the full rules.
+
+The `music.collection` example exercises the sound path end-to-end (three components in
+`.wav` / `.ogg` / `.opus`).
+
+---
+
 ## Runtime usage
 
 Full runnable example: [main/main.script](main/main.script). The minimum integration is:

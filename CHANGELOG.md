@@ -3,10 +3,18 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.0] - 2026-07-18
 
 Sync with the production client this reference project mirrors: the runtime module
 and the packer were brought in line with the shipped implementation.
+
+Media archive model (packer): a collection's resources are split by kind into separate
+archives so heavy media downloads and updates independently. **Textures** go to
+`<collection>_texture` / `common_texture_<hash>` (a `.texturec` is kept with its
+`.a.texturesetc` by shared name stem); **sounds** go to `<collection>_sound` /
+`common_sound_<hash>` (a `.soundc` is kept with its `.oggc`/`.opusc`/`.wavc` audio via the
+resource-graph `children` edge, 1:N); everything else is the base `<collection>` /
+`common_<hash>`. Textures existed before this release; sounds are new here (see Added).
 
 ### Added
 - Byte-based download progress: `get_download_progress()` and
@@ -50,6 +58,8 @@ and the packer were brought in line with the shipped implementation.
   the suffixed (`<id>.collectionc`) and bare (`<id>`) naming, so archives categorize
   correctly regardless of `LIVEUPDATE_COLLECTION_SUFFIX` (previously bare-named demo
   archives all fell through to "other").
+- README gained a "What the packer produces" section describing the texture / sound /
+  common archive layout; `LIVEUPDATE_ARCHITECTURE.md` §2 documents the full grouping rules.
 
 ### Removed
 - `tools/liveupdate_report.py` and `tools/liveupdate_report_generator.py` — superseded
