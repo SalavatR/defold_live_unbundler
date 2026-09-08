@@ -553,9 +553,25 @@ end
 ---Fetches the manifest of each active resolution and returns them as a group.
 ---Only the active sides are downloaded; a single-resolution session hits one URL.
 ---@param cb fun(success: boolean, result: liveupdater.manifest_group|string)
-local function check_manifests(cb)
+local function check_manifests(client_version, cb)
 	---@type liveupdater.manifest_group
 	local result = {}
+
+	local function check_client_version(manifest, resolution)
+		if client_version ~= nil and manifest.client_version ~= client_version then
+			cb(
+				false,
+				string.format(
+					"Client version mismatch in %s manifest: expected %s, got %s",
+					resolution,
+					client_version,
+					tostring(manifest.client_version)
+				)
+			)
+			return false
+		end
+		return true
+	end
 
 	---@param next_step fun()
 	local function fetch_lowres(next_step)
@@ -571,6 +587,9 @@ local function check_manifests(cb)
 			local manifest = decode_json_data(data)
 			if not manifest then
 				cb(false, "Unable to parse low res manifest")
+				return
+			end
+			if not check_client_version(manifest, "lowres") then
 				return
 			end
 			result.lowres = manifest
@@ -592,6 +611,9 @@ local function check_manifests(cb)
 			local manifest = decode_json_data(data)
 			if not manifest then
 				cb(false, "Unable to parse highres manifest")
+				return
+			end
+			if not check_client_version(manifest, "highres") then
 				return
 			end
 			result.highres = manifest
@@ -1093,6 +1115,13 @@ function M.init(options, cb, module_available_fn)
 		cb(true)
 		return
 	end
+	if
+		options.client_version ~= nil
+		and (type(options.client_version) ~= "string" or not options.client_version:match("%S"))
+	then
+		cb(false, "Liveupdater: client_version must be a non-empty string")
+		return
+	end
 	assert(M.save_cache_key, "Liveupdater: save_cache_key not set; call M.set_save_cache_key before M.init")
 	load_local_files_list()
 
@@ -1107,12 +1136,12 @@ function M.init(options, cb, module_available_fn)
 	active_high = options.hires_server_path ~= nil
 
 	if html5 then
-		check_manifests(function(success, result)
+		check_manifests(options.client_version, function(success, result)
 			if success then
 				---@cast result -string
 				initialize_from_manifests(result, cb)
 			else
-				cb(false, string.format("Failed. Global_success: %s", tostring(success)))
+				cb(false, result)
 			end
 		end)
 	end

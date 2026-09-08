@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 import math
@@ -27,10 +28,9 @@ COLLECTION_SUFFIX = os.environ.get("LIVEUPDATE_COLLECTION_SUFFIX", "")
 
 
 class PackContext:
-    def __init__(self):
-        self.restore_from_tree = (
-            len(sys.argv) > 1 and sys.argv[1] == "--restore_from_tree"
-        )
+    def __init__(self, restore_from_tree=False, client_version=None):
+        self.restore_from_tree = restore_from_tree
+        self.client_version = client_version
         print("restore_from_tree: ", self.restore_from_tree)
 
         self.debug_files = False
@@ -343,6 +343,8 @@ class PackContext:
         manifest_output["file_versions"] = self.build_file_versions()
         manifest_output["file_sizes"] = self.build_file_sizes()
         manifest_output["dmanifest_info"] = self.build_dmanifest_info()
+        if self.client_version is not None:
+            manifest_output["client_version"] = self.client_version
         with open(os.path.join(self.result_folder, "manifest.json"), "w") as outfile:
             json.dump(manifest_output, outfile, indent=4)
         os.remove("files_tree.json")
@@ -586,6 +588,8 @@ class PackContext:
             "file_sizes": self.build_file_sizes(),
             "dmanifest_info": self.build_dmanifest_info(),
         }
+        if self.client_version is not None:
+            manifest_output["client_version"] = self.client_version
 
         for filepath, archives in self.dependency_list.items():
             for archive in archives:
@@ -715,7 +719,13 @@ class PackContext:
 
 
 def main():
-    PackContext().run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--restore_from_tree", action="store_true")
+    parser.add_argument("--client-version")
+    options = parser.parse_args()
+    if options.client_version is not None and not options.client_version.strip():
+        parser.error("--client-version must be a non-empty string")
+    PackContext(options.restore_from_tree, options.client_version).run()
 
 
 if __name__ == "__main__":

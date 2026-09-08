@@ -62,6 +62,18 @@ All build recipes live in the [Makefile](Makefile). Highlights:
 | `make serve3`                 | Serves `dist/defold_live_unbundler/` on port 8000. |
 | `make report`                 | Builds a self-contained HTML report of collections / archives / download sizes into `dist/output/<ver>/` (see `tools/liveupdate_collections_report.py`). Run automatically at the end of `buildliveupdateres`; use standalone to regenerate without rebuilding. |
 
+To associate the manifests with a client version, pass it explicitly:
+
+```sh
+make buildliveupdateres LIVEUPDATE_CLIENT_VERSION=22.00
+python3 tools/liveupdate_pack.py --client-version 22.00
+python3 tools/liveupdate_pack.py --restore_from_tree --client-version 22.00
+```
+
+The optional `client_version` field preserves the exact string. A fresh pack omits it
+when no version is supplied. Restore inherits the version from `files_tree.json`
+unless `--client-version` overrides it. Archive names and content hashes are unchanged.
+
 ---
 
 ## What the packer produces
@@ -129,6 +141,12 @@ end)
 Pass only one of `lowres_server_path` / `hires_server_path` to run a single resolution
 (then `res_mode` is ignored and every module loads that one); pass both to let `res_mode`
 choose per module.
+
+Optionally pass `client_version = "22.00"` in the table supplied to `init` to check
+compatibility. Each active manifest must contain the same `client_version` string;
+a missing or different value calls `cb(false, error_text)` before archives are
+downloaded, mounted, or removed. Omitting the option disables this check, including
+for manifests without version metadata. Builds without liveupdate skip the check.
 
 Then react to events (`MSG_FILE_LOADED`, `MSG_MODULE_LOADED`, `MSG_ALL_LOADED`, `MSG_NETWORK_ERROR`) inside `on_message`, and gate `collectionproxy` loads on `live_unbundler.is_module_loaded(...)` — see [main/main.script](main/main.script) for the pattern.
 

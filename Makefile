@@ -2,6 +2,7 @@ BOB_VERSION := f735c12192bf95684e6ae1ae27c400b8170fc6d8
 BOB_STAGE := stable
 VERSION_NUMBER_STR := $(shell grep '^version =' game.project | awk -F '=' '{print $$2}' | awk '{$$1=$$1};1')
 VERSION_NUMBER := $(shell echo $(VERSION_NUMBER_STR))
+LIVEUPDATE_CLIENT_VERSION ?=
 BOB_FILE := /tmp/bob.$(BOB_VERSION).jar
 
 $(BOB_FILE):
@@ -28,7 +29,7 @@ buildliveupdatehighres: $(BOB_FILE)
 	@echo "Build liveupdate"
 	@rm -rf "dist/output/$(VERSION_NUMBER)/liveupdatehighres"
 	@unzip -o -q "liveupdate_dist/*.zip" -d "liveupdate_dist/"
-	@python3 "tools/liveupdate_pack.py"
+	@python3 "tools/liveupdate_pack.py" $(if $(strip $(LIVEUPDATE_CLIENT_VERSION)),--client-version "$(LIVEUPDATE_CLIENT_VERSION)")
 	@mkdir -p "dist/output/$(VERSION_NUMBER)"
 	@mv "liveupdate_zip/" "dist/output/$(VERSION_NUMBER)/liveupdatehighres/"
 	@rm -rf "liveupdate_zip"
@@ -53,7 +54,7 @@ buildliveupdatelowres: $(BOB_FILE)
 	@echo "Build liveupdate"
 	@rm -rf "dist/output/$(VERSION_NUMBER)/liveupdatelowres"
 	@unzip -o -q "liveupdate_dist/*.zip" -d "liveupdate_dist/"
-	@python3 "tools/liveupdate_pack.py" --restore_from_tree
+	@python3 "tools/liveupdate_pack.py" --restore_from_tree $(if $(strip $(LIVEUPDATE_CLIENT_VERSION)),--client-version "$(LIVEUPDATE_CLIENT_VERSION)")
 	@mkdir -p "dist/output/$(VERSION_NUMBER)"
 	@mv "liveupdate_zip" "dist/output/$(VERSION_NUMBER)/liveupdatelowres"
 	@rm -rf "liveupdate_zip"
